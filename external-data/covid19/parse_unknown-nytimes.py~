@@ -1,0 +1,16 @@
+import pandas as pd
+import numpy as np
+
+filename_nytimesraw = "rawdata/nytimes/us-counties.csv"
+
+df = pd.read_csv(filename_nytimesraw)
+df['perc of cases unknown'] = 0.0
+df['perc of deaths unknown'] = 0.0
+states = np.unique(df.state.to_list())
+
+for i in range(len(states)):
+    states[i] = states[i].replace(" ", "-")
+
+for s in states:
+    dfs = df[df.state == s]
+    
