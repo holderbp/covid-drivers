@@ -9,13 +9,16 @@ import datetime as dt
 ##########################
 # Set this to True to re-run the collection of all
 # county/DMA/state FIPS (see pars/files in function)
-do_fips_dma_collection = True
+do_fips_dma_collection = False
 # Set this to False when de-bugging, so the (2-minute-long)
 # loading/cleaning can be skipped
-do_load_and_clean_nytjhu = True
+do_load_and_clean_nytjhu = False
 # Probably set these to True 
 delete_jhu_cruise_entries = True
 delete_jhu_prison_entries = True
+# When printing the negative daily counts
+#  (set to zero to see all places where cumulative is not cumulative)
+threshold_for_negative_daily_counts = -10
 
 #############
 # Filenames #
@@ -132,28 +135,6 @@ def nytjhu_create_composite_dmas(df, datatype, dmalist):
             df = create_composite_entry(df, fipslist, int(f"99{d:03d}"), dmaname, "",
                                        dropall=False)    
     return df
-
-def nyt_move_city_to_county(df, cityname):
-    if (cityname == "Kansas City"):
-        county="Jackson"
-        state="Missouri"
-    elif (cityname == "Joplin"):
-        county="Jasper"
-        state="Missouri"
-    tempdf = df[(df['county'] == county) 
-                & (df['state'] == state)]
-    ind_to_drop = []
-    for index, row in \
-        df[(df['county'] == cityname)
-           & (df['state'] == state)].iterrows():
-        thedate = row['date']
-        cases = row['cases']
-        deaths = row['deaths']
-        county_ind = tempdf.index[ tempdf['date'] == thedate].to_list()[0]
-        df.at[county_ind, 'cases'] = df.at[county_ind, 'cases'] + cases
-        df.at[county_ind, 'deaths'] = df.at[county_ind, 'deaths'] + deaths
-        ind_to_drop.append(index)
-    df.drop(ind_to_drop, inplace=True)    
 
 def nyt_make_fips_dicts(df, fips, first_date, last_date):
     # Grab the subset of date-rows with this fips value
@@ -650,7 +631,7 @@ def load_nyt_jhu_covid():
     msg_to_usr("NYT-raw", "Assigning temporary fake-FIPS to Kansas City")
     nytjhu_change_data(nytraw_df, county="Kansas City", state="Missouri",
                        newfips=29998)
-    msg_to_usr("NYT-raw", "Assigning temporary fake-FIPS to Kansas City")
+    msg_to_usr("NYT-raw", "Assigning temporary fake-FIPS to Joplin")
     nytjhu_change_data(nytraw_df, county="Joplin", state="Missouri",
                        newfips=29999)
     #==================================================
@@ -867,9 +848,9 @@ def load_nyt_jhu_covid():
     #      NYTimes lists Joplin, MO separately with no FIPS (starting 2020-06-25)
     # Move to Jasper County (29097) (southern part of Joplin in Newton, but oh well)
     msg_to_usr("NYT-raw", "Moving Joplin to Jasper County")
-    nyt_c_df = create_composite_entry(nyt_c_df, [29999,29097], 29095, "Jasper", "Missori",
+    nyt_c_df = create_composite_entry(nyt_c_df, [29999,29097], 29097, "Jasper", "Missori",
                                       dropall=True)
-    nyt_d_df = create_composite_entry(nyt_d_df, [29999,29097], 29095, "Jasper", "Missori",
+    nyt_d_df = create_composite_entry(nyt_d_df, [29999,29097], 29097, "Jasper", "Missori",
                                       dropall=True)
     #===============================================================
     #==== Delete the Puerto Rico Counties from deaths dataframe ====
@@ -1345,21 +1326,22 @@ def get_daily_data(dfin, datatype):
     allfips = np.unique(df['fips'].to_list()).astype(int)
     msg_to_usr("daily-counts-" + datatype, "Checking for negative daily counts:")
     for f in allfips:
-        print(f)
+        #print(f)
         # print the location
         thecounty = (counties_df['fips'] == f)
         sabb = counties_df[thecounty]['stateabb'].to_list()[0]
         county = counties_df[thecounty]['countylong'].to_list()[0]
-        print("\t", county, sabb)
+        #print("\t", county, sabb)
         # restrict to one fips
         onefip = (df['fips'] == f)
         df.loc[onefip, 'daily'] = df[onefip]['cum'].diff()
         # check for negative daily values
         dfsub = df[onefip]
-        for index, row in dfsub[dfsub['daily'] < 0].iterrows():
-            print("\t\t", row['fips'], "\t",
-                  row['date'].strftime("%Y-%m-%d"), "\t",
-                  row['cum'], "\t", row['daily'])
+        for index, row in dfsub[dfsub['daily'] < threshold_for_negative_daily_counts].iterrows():
+            print(datatype, row['date'].strftime("%Y-%m-%d"), "\t",
+                  f"{int(row['cum']):<10}", "\t",
+                  f"{int(row['daily']):<10}", "\t",
+                  county, sabb, row['fips'])
     return df
 
 #############
