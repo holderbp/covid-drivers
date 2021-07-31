@@ -7,34 +7,72 @@ import datetime as dt
 ##########################
 # Parameters and Options #
 ##########################
-# Set this to True to re-run the collection of all
-# county/DMA/state FIPS (see pars/files in function)
+#=== FIPS setup and definitions: Should be off in general (False)
+#
+#  ---> But set to True to re-run the collection/definition of all
+#       county/DMA/state FIPS (see pars/files in function)
+#
 do_fips_dma_collection = False
-# Set this to False when de-bugging, so the (2-minute-long)
-# loading/cleaning can be skipped
+#=== Processing Steps: Should be done (True) whenever data is
+#                      downloaded again.
+#
+#  ---> But set these to False when de-bugging, so you can skip the
+#
+#             * loading/cleaning (2 min)
+#             * transpose/daily-counts (10 min)
+#
+#       The processing (including FIPS setup, above) takes about 15min total.
+#
 do_load_and_clean_nytjhu = False
-# Probably set these to True 
+do_transpose_and_get_daily_values = False
+#=== Delete cruise ship entries? (Probably set these to True)
 delete_jhu_cruise_entries = True
 delete_jhu_prison_entries = True
-# When printing the negative daily counts
-#  (set to zero to see all places where cumulative is not cumulative)
-threshold_for_negative_daily_counts = -10
+#=== Dealing with negative daily difference counts
+#
+#  Warn on each negative?
+# (set threshold to zero to see all places where cumulative is not cumulative)
+warn_on_negative_daily_counts = False
+threshold_for_negative_daily_counts = 0
+# Options for cleaning negative daily counts:
+#
+#  delete: just set to nan
+#  delete_and_interpolate: just set to nan and then interpolate
+#
+negative_daily_counts_option = "delete_and_interpolate" # "delete"
+#=== Check for data dumps
+#
+# After running this with thresholds (10.0,10), I see that
+# there are ~500 entries in each datafile (cases, deaths, either
+# publisher) in which the daily count exceeds 10x the 14d average.
+# But all of these are less than 15x.  So, I guess I shouldn't do
+# anything about it.
+#
+#   see the "data_dump_possibilities_10thresh_10threshfac.txt"
+#   files for details.
+#
+#
+warn_on_data_dumps = True
+threshold_factor_for_data_dump = 10.0 # above 14d average
+threshold_of_data_dump = 10 # counts
 
 #############
 # Filenames #
 #############
 outfilename_statecounty_fips = "UScounty_fips_dma.csv"
-filename_nyt_raw = "rawdata/nytimes/us-counties.csv"
-filename_jhu_cases_raw = "rawdata/jhu/time_series_covid19_confirmed_US.csv"
-filename_jhu_deaths_raw = "rawdata/jhu/time_series_covid19_deaths_US.csv"
-nyt_c_cleaned_output_file = "nyt_c_cleaned.csv"
-nyt_d_cleaned_output_file = "nyt_d_cleaned.csv"    
-jhu_c_cleaned_output_file = "jhu_c_cleaned.csv"
-jhu_d_cleaned_output_file = "jhu_d_cleaned.csv"    
-nyt_c_daily_output_file = "nyt_c_daily.csv"
-nyt_d_daily_output_file = "nyt_d_daily.csv"    
-jhu_c_daily_output_file = "jhu_c_daily.csv"
-jhu_d_daily_output_file = "jhu_d_daily.csv"    
+raw_datadir = "rawdata/"
+output_datadir = "output/"
+filename_nyt_raw = raw_datadir + "nytimes/us-counties.csv"
+filename_jhu_cases_raw = raw_datadir + "jhu/time_series_covid19_confirmed_US.csv"
+filename_jhu_deaths_raw = raw_datadir + "jhu/time_series_covid19_deaths_US.csv"
+nyt_c_cleaned_output_file = output_datadir + "nyt_c_cleaned.csv"
+nyt_d_cleaned_output_file = output_datadir + "nyt_d_cleaned.csv"    
+jhu_c_cleaned_output_file = output_datadir + "jhu_c_cleaned.csv"
+jhu_d_cleaned_output_file = output_datadir + "jhu_d_cleaned.csv"    
+nyt_c_daily_output_file = output_datadir + "nyt_c_daily.csv"
+nyt_d_daily_output_file = output_datadir + "nyt_d_daily.csv"    
+jhu_c_daily_output_file = output_datadir + "jhu_c_daily.csv"
+jhu_d_daily_output_file = output_datadir + "jhu_d_daily.csv"    
 
 #####################################################################
 # Helper scripts for loading and cleaning NYT and JHU raw data sets #
@@ -228,7 +266,7 @@ def output_fips_dma_file():
         trends_dir + "data/dma/county_dma_sood-gaurav-harvard-dataverse_edited.csv"
     #=== Load the shapes file and keep only FIPS information
     #    (these code snippets mostly taken from pwpd.py)
-    print("=== Loading shapefile...")
+    msg_to_usr("FIPS-collection", "Loading shapefile...")
     counties_df = gpd.read_file(UScounty_shape_filepath)
     counties_df = counties_df[['STATEFP', 'COUNTYFP', 'NAME', 'NAMELSAD']]
     counties_df.columns = \
@@ -243,7 +281,7 @@ def output_fips_dma_file():
     counties_df['fips'] = counties_df['fips'].astype(int)
     #=== Add the state name and abbreviation for each county
     #    using the file of US state FIPS codes
-    print("=== Getting State names...")
+    msg_to_usr("FIPS-collection", "Getting state names...")
     counties_df['state'] = ""
     counties_df['stateabb'] = ""
     statefips_df = pd.read_csv(USstate_fips_filepath)
@@ -257,7 +295,7 @@ def output_fips_dma_file():
             statefips_df[thestate]['abb'].to_list()[0]
     #=== Add metro area
     #    (code copied mostly from get-trends-by-county.py)
-    print("=== Getting Metro Areas...")
+    msg_to_usr("FIPS-collection", "Getting Metro Areas...")
     counties_df['dma'] = 0
     counties_df['dmaname'] = ""
     DMA_df = pd.read_csv(countyDMA_filename)
@@ -338,9 +376,14 @@ def output_fips_dma_file():
     #         'regular' + 'part of composite'  (e.g., only using JHU nyc data)
     #         'metro'
     #         'state'
-    # 
-    # set the default value
+    #
+    # And add a column for composite-county FIPS (ccFIPs), which is blank
+    # except for the "part-of-composite" counties.  When getting the pwpd for
+    # composite counties, this can then be used to find the counties that comprise it.
+    #
+    # set the default values
     counties_df['county_type'] = "regular"
+    counties_df['ccFIPS'] = np.nan
     # set for whole state entries
     counties_df.loc[counties_df['fips_county'] == 0, 'county_type'] = "state"
     # set for DMA entries
@@ -350,6 +393,7 @@ def output_fips_dma_file():
     fipslist = [36047, 36081, 36085, 36005, 36061]
     counties_df.loc[counties_df['fips'].isin(fipslist), 'county_type'] = \
         "part-of-composite"
+    counties_df.loc[counties_df['fips'].isin(fipslist), 'ccFIPS'] = 36901
     # utah health districts
     fipslist = [49001, 49003, 49005, 49007, 49009, 49013,
                 49015, 49017, 49019, 49021, 49023, 49025,
@@ -357,18 +401,35 @@ def output_fips_dma_file():
                 49047, 49053, 49055, 49057]
     counties_df.loc[counties_df['fips'].isin(fipslist), 'county_type'] = \
         "part-of-composite"
-    # AK (two county pairs)
-    fipslist = [2060, 2164, 2282, 2105]    
+    fipslist = [49003, 49005, 49033] # Bear River
+    counties_df.loc[counties_df['fips'].isin(fipslist), 'ccFIPS'] = 49901
+    fipslist = [49023, 49027, 49031, 49039, 49041, 49055] # Central
+    counties_df.loc[counties_df['fips'].isin(fipslist), 'ccFIPS'] = 49902    
+    fipslist = [49007, 49015, 49019]    # Southeast
+    counties_df.loc[counties_df['fips'].isin(fipslist), 'ccFIPS'] = 49903    
+    fipslist = [49001, 49017, 49021, 49025, 49053]  # Southwest
+    counties_df.loc[counties_df['fips'].isin(fipslist), 'ccFIPS'] = 49904
+    fipslist = [49009, 49013, 49047]    # TriCounty
+    counties_df.loc[counties_df['fips'].isin(fipslist), 'ccFIPS'] = 49905
+    fipslist = [49029, 49057]     # Weber-Morgan
+    counties_df.loc[counties_df['fips'].isin(fipslist), 'ccFIPS'] = 49906    
+    # AK (two county pairs... Chugach plus Copper River is defined below)
+    fipslist = [2060, 2164, 2282, 2105]
     counties_df.loc[counties_df['fips'].isin(fipslist), 'county_type'] = \
         "part-of-composite"    
+    fipslist = [2060, 2164]     # Bristol Bay plus Lake and Peninsula
+    counties_df.loc[counties_df['fips'].isin(fipslist), 'ccFIPS'] = 2901
+    fipslist = [2282, 2105]     # Yakutat plus Hoonah-Angoon
+    counties_df.loc[counties_df['fips'].isin(fipslist), 'ccFIPS'] = 2902
     # MA (Dukes and Nantucket)
     fipslist = [25019, 25007]
     counties_df.loc[counties_df['fips'].isin(fipslist), 'county_type'] = \
-        "part-of-composite"        
+        "part-of-composite"
+    counties_df.loc[counties_df['fips'].isin(fipslist), 'ccFIPS'] = 25901    
     #=== Rearrange the columns
     counties_df = \
-        counties_df[['fips_state', 'fips_county', 'fips', 'county_type', 'state',
-                     'stateabb', 'county', 'countylong', 'dma', 'dmaname']]
+        counties_df[['fips_state', 'fips_county', 'fips', 'county_type', 'ccFIPS',
+                     'state', 'stateabb', 'county', 'countylong', 'dma', 'dmaname']]
     #=== Create new composite FIPS codes to align with NYT/JHU import data
     newfipdicts = [
         {
@@ -376,6 +437,7 @@ def output_fips_dma_file():
             'fips_county': 901,
             'fips': 36901,
             'county_type': "composite",
+            'ccFIPS': np.nan,
             'state': 'New York',
             'stateabb': 'NY',
             'county': 'New York City',
@@ -387,7 +449,8 @@ def output_fips_dma_file():
             'fips_state': 25,
             'fips_county': 901,
             'fips': 25901,
-            'county_type': "composite",            
+            'county_type': "composite",
+            'ccFIPS': np.nan,            
             'state': 'Massachusetts',
             'stateabb': 'MA',
             'county': 'Dukes and Nantucket',
@@ -400,6 +463,7 @@ def output_fips_dma_file():
             'fips_county': 901,
             'fips': 2901,
             'county_type': "composite",            
+            'ccFIPS': np.nan,            
             'state': 'Alaska',
             'stateabb': 'AK',
             'county': 'Bristol Bay plus Lake and Peninsula',
@@ -412,6 +476,7 @@ def output_fips_dma_file():
             'fips_county': 902,
             'fips': 2902,
             'county_type': "composite",            
+            'ccFIPS': np.nan,            
             'state': 'Alaska',
             'stateabb': 'AK',
             'county': 'Yakutat plus Hoonah-Angoon',
@@ -423,7 +488,8 @@ def output_fips_dma_file():
             'fips_state': 2,
             'fips_county': 63,
             'fips': 2063,
-            'county_type': 'part-of-composite',            
+            'county_type': 'part-of-composite',
+            'ccFIPS': 2903,
             'state': 'Alaska',
             'stateabb': 'AK',
             'county': 'Chugach',
@@ -435,7 +501,8 @@ def output_fips_dma_file():
             'fips_state': 2,
             'fips_county': 66,
             'fips': 2066,
-            'county_type': 'part-of-composite',            
+            'county_type': 'part-of-composite',
+            'ccFIPS': 2903,            
             'state': 'Alaska',
             'stateabb': 'AK',
             'county': 'Copper River',
@@ -448,6 +515,7 @@ def output_fips_dma_file():
             'fips_county': 903,
             'fips': 2903,
             'county_type': "composite",            
+            'ccFIPS': np.nan,            
             'state': 'Alaska',
             'stateabb': 'AK',
             'county': 'Chugach plus Copper River',
@@ -460,6 +528,7 @@ def output_fips_dma_file():
             'fips_county': 901,
             'fips': 49901,
             'county_type': "composite",            
+            'ccFIPS': np.nan,            
             'state': 'Utah',
             'stateabb': 'UT',
             'county': 'HD Bear River',
@@ -472,6 +541,7 @@ def output_fips_dma_file():
             'fips_county': 902,
             'fips': 49902,
             'county_type': "composite",            
+            'ccFIPS': np.nan,            
             'state': 'Utah',
             'stateabb': 'UT',
             'county': 'HD Central',
@@ -484,6 +554,7 @@ def output_fips_dma_file():
             'fips_county': 903,
             'fips': 49903,
             'county_type': "composite",            
+            'ccFIPS': np.nan,            
             'state': 'Utah',
             'stateabb': 'UT',
             'county': 'HD Southeast',
@@ -496,6 +567,7 @@ def output_fips_dma_file():
             'fips_county': 904,
             'fips': 49904,
             'county_type': "composite",            
+            'ccFIPS': np.nan,            
             'state': 'Utah',
             'stateabb': 'UT',
             'county': 'HD Southwest',
@@ -508,6 +580,7 @@ def output_fips_dma_file():
             'fips_county': 905,
             'fips': 49905,
             'county_type': "composite",            
+            'ccFIPS': np.nan,            
             'state': 'Utah',
             'stateabb': 'UT',
             'county': 'HD TriCounty',
@@ -520,6 +593,7 @@ def output_fips_dma_file():
             'fips_county': 906,
             'fips': 49906,
             'county_type': "composite",            
+            'ccFIPS': np.nan,            
             'state': 'Utah',
             'stateabb': 'UT',
             'county': 'HD Weber-Morgan',
@@ -532,6 +606,7 @@ def output_fips_dma_file():
             'fips_county': 901,
             'fips': 26901,
             'county_type': "other",            
+            'ccFIPS': np.nan,            
             'state': 'Michigan',
             'stateabb': 'MI',
             'county': 'MiDOC',
@@ -544,6 +619,7 @@ def output_fips_dma_file():
             'fips_county': 902,
             'fips': 26902,
             'county_type': "other",                        
+            'ccFIPS': np.nan,            
             'state': 'Michigan',
             'stateabb': 'MI',
             'county': 'MiFCI',
@@ -816,7 +892,7 @@ def load_nyt_jhu_covid():
     #===========================================
     #==== Rearrange NYT data to be like JHU ====
     #===========================================    
-    msg_to_usr("NYT-raw", "Re-arranging NYTimes data to look like JHU")
+    msg_to_usr("NYT-raw", "Re-arranging NYTimes data to look like JHU (takes few minutes)")
     allfips = np.unique(nytraw_df['fips'].to_list()).astype(int)
     # make two dictionary entries (cases and deaths) for each fip
     #   {fips: XXXXX, 1/22/2020: X, 1/23/2020: X, ..., <last_date>: X}
@@ -1324,7 +1400,12 @@ def get_daily_data(dfin, datatype):
     # create a new daily cases/deaths column
     df['daily'] = 0
     allfips = np.unique(df['fips'].to_list()).astype(int)
-    msg_to_usr("daily-counts-" + datatype, "Checking for negative daily counts:")
+    msg_to_usr(datatype + "_daily-counts", "Checking for negative daily counts and data dumps")
+    if (negative_daily_counts_option == "delete_and_interpolate"):
+        msg_to_usr(datatype + "_daily-counts", "Interpolating across negative daily counts")
+    elif (negative_daily_counts_option == "delete"):
+        msg_to_usr(datatype  + "_daily-counts", "Setting negative daily counts to nan")      
+    df['14davg'] = 0.0
     for f in allfips:
         #print(f)
         # print the location
@@ -1332,16 +1413,42 @@ def get_daily_data(dfin, datatype):
         sabb = counties_df[thecounty]['stateabb'].to_list()[0]
         county = counties_df[thecounty]['countylong'].to_list()[0]
         #print("\t", county, sabb)
-        # restrict to one fips
-        onefip = (df['fips'] == f)
-        df.loc[onefip, 'daily'] = df[onefip]['cum'].diff()
-        # check for negative daily values
-        dfsub = df[onefip]
-        for index, row in dfsub[dfsub['daily'] < threshold_for_negative_daily_counts].iterrows():
-            print(datatype, row['date'].strftime("%Y-%m-%d"), "\t",
-                  f"{int(row['cum']):<10}", "\t",
-                  f"{int(row['daily']):<10}", "\t",
-                  county, sabb, row['fips'])
+        # get restriction to one fips
+        onefips = (df['fips'] == f)
+        df.loc[onefips, 'daily'] = df[onefips]['cum'].diff()
+        if warn_on_negative_daily_counts:
+            # check for negative daily values
+            for index, row in \
+                df[onefips
+                   & (df['daily'] < threshold_for_negative_daily_counts)].iterrows():
+                print(datatype, row['date'].strftime("%Y-%m-%d"), "\t",
+                      f"{int(row['cum']):<10}", "\t",
+                      f"{int(row['daily']):<10}", "\t",
+                      county, sabb, row['fips'])
+        if (negative_daily_counts_option == "delete_and_interpolate"):
+            # set negative values to nan
+            df.loc[onefips & (df['daily'] < 0), 'daily'] = np.nan
+            # then interpolate across nan values
+            df.loc[onefips, 'daily'] = \
+                df[onefips]['daily'].interpolate(method='polynomial', order=1)
+        elif (negative_daily_counts_option == "delete"):
+            # set negative values to nan
+            df.loc[onefips & (df['daily'] < 0), 'daily'] = np.nan
+        # calculate the 14d-average
+        df.loc[onefips, '14davg'] \
+            = df[onefips]['daily'].rolling(14).mean()
+        if warn_on_data_dumps:
+            for index, row in \
+                df[onefips &
+                   (df['daily'] > ( threshold_factor_for_data_dump
+                                       * df['14davg'] ))
+                   & (df['daily'] > threshold_of_data_dump)].iterrows():
+                print(datatype + "_data-dump",
+                      row['date'].strftime("%Y-%m-%d"), "\t",
+                      f"{row['14davg']:<6.3f}", "\t",
+                      f"{int(row['daily']):<6}", "\t",
+                      f"{row['daily']/row['14davg']:<6.1f}", "\t",
+                      county, sabb, row['fips'])
     return df
 
 #############
@@ -1378,35 +1485,46 @@ else:
 if do_load_and_clean_nytjhu:
     [nyt_c_df, nyt_d_df, jhu_c_df, jhu_d_df] = load_nyt_jhu_covid()
 else:
-    msg_to_usr("main", "Loading already cleaned data files")
     nyt_c_df = pd.read_csv(nyt_c_cleaned_output_file)
     nyt_d_df = pd.read_csv(nyt_d_cleaned_output_file)
     jhu_c_df = pd.read_csv(jhu_c_cleaned_output_file)
-    jhu_d_df = pd.read_csv(jhu_d_cleaned_output_file)    
+    jhu_d_df = pd.read_csv(jhu_d_cleaned_output_file)
+    lastdate = nyt_c_df.columns.to_list()[-1]
+    msg_to_usr("main", "Loading already cleaned data files..." + 
+               " last date is: " + lastdate)
+
+
+if do_transpose_and_get_daily_values:
+    #=== Transpose each dataframe to get form:
+    #
+    #     [date, fips, cases/deaths]
+    #
+    msg_to_usr("main", "Transposing and getting daily values for NYT cases")
+    nyt_c_df = get_daily_data(nyt_c_df, 'nyt_cases')
+    msg_to_usr("main", "Transposing and getting daily values for NYT deaths")
+    nyt_d_df = get_daily_data(nyt_d_df, 'nyt_deaths')
+    msg_to_usr("main", "Transposing and getting daily values for JHU cases")
+    jhu_c_df = get_daily_data(jhu_c_df, 'jhu_cases')
+    msg_to_usr("main", "Transposing and getting daily values for JHU deaths")
+    jhu_d_df = get_daily_data(jhu_d_df, 'jhu_deaths')
+
+    #==== Output dataframes to csv
+    nyt_c_df.to_csv(nyt_c_daily_output_file, index=False)
+    nyt_d_df.to_csv(nyt_d_daily_output_file, index=False)    
+    jhu_c_df.to_csv(jhu_c_daily_output_file, index=False)
+    jhu_d_df.to_csv(jhu_d_daily_output_file, index=False)
+else:
+    #=== Otherwise, load the dataframes from file
+    nyt_c_df = pd.read_csv(nyt_c_daily_output_file)
+    nyt_d_df = pd.read_csv(nyt_d_daily_output_file)
+    jhu_c_df = pd.read_csv(jhu_c_daily_output_file)
+    jhu_d_df = pd.read_csv(jhu_d_daily_output_file)
+    lastdate = nyt_c_df.date.max()
+    msg_to_usr("main", "Loading already daily-diffed data files..."
+               +  " last date is: " + lastdate)
 
 # Combine NYT and JHU data into single dataframe:
 #
-# transpose to get form:
-#
-#     [date, fips, cases/deaths]
-msg_to_usr("main", "Transposing and getting daily values for NYT cases")
-nyt_c_df = get_daily_data(nyt_c_df, 'cases')
-msg_to_usr("main", "Transposing and getting daily values for NYT deaths")
-nyt_d_df = get_daily_data(nyt_d_df, 'deaths')
-msg_to_usr("main", "Transposing and getting daily values for JHU cases")
-jhu_c_df = get_daily_data(jhu_c_df, 'cases')
-msg_to_usr("main", "Transposing and getting daily values for JHU deaths")
-jhu_d_df = get_daily_data(jhu_d_df, 'deaths')
-
-#==================================
-#==== Output dataframes to csv ====
-#==================================
-nyt_c_df.to_csv(nyt_c_daily_output_file, index=False)
-nyt_d_df.to_csv(nyt_d_daily_output_file, index=False)    
-jhu_c_df.to_csv(jhu_c_daily_output_file, index=False)
-jhu_d_df.to_csv(jhu_d_daily_output_file, index=False)
-
-
 #    * combine into single dataframe
 #
 #           [date, fips, jhu_cases, nyt_cases, jhu_deaths, nyt_deaths]
@@ -1415,3 +1533,12 @@ jhu_d_df.to_csv(jhu_d_daily_output_file, index=False)
 #
 #    * calculate 14-day averages 
 #
+msg_to_usr("main", "Merging dataframes into single dataframe")
+all_df = pd.merge(jhu_c_df, jhu_d_df, how='left', on=['date', 'fips'])
+all_df = pd.merge(all_df, nyt_c_df, how='left', on=['date', 'fips'])
+all_df = pd.merge(all_df, nyt_d_df, how='left', on=['date', 'fips'])
+all_df.columns = ['date', 'fips', 'jhu_c_cum', 'jhu_c_daily', 'jhu_c_14davg',
+                  'jhu_d_cum', 'jhu_d_daily', 'jhu_d_14davg',
+                  'nyt_c_cum', 'nyt_c_daily', 'nyt_c_14davg',
+                  'nyt_d_cum', 'nyt_d_daily', 'nyt_d_14davg']
+all_df[all_df['fips'] == 36091].to_csv("junk.csv", index=False)
