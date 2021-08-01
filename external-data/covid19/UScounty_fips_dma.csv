@@ -95,7 +95,6 @@ fips_state,fips_county,fips,county_type,ccFIPS,state,stateabb,county,countylong,
 2,220,2220,regular,,Alaska,AK,Sitka,Sitka City and Borough,206.0,Juneau
 2,230,2230,regular,,Alaska,AK,Skagway,Skagway Municipality,206.0,Juneau
 2,240,2240,regular,,Alaska,AK,Southeast Fairbanks,Southeast Fairbanks Census Area,203.0,Fairbanks
-2,261,2261,regular,,Alaska,AK,Valdez-Cordova,Valdez-Cordova Census Area,156.0,Anchorage
 2,275,2275,regular,,Alaska,AK,Wrangell,Wrangell City and Borough,206.0,Juneau
 2,282,2282,part-of-composite,2902.0,Alaska,AK,Yakutat,Yakutat City and Borough,206.0,Juneau
 2,290,2290,regular,,Alaska,AK,Yukon-Koyukuk,Yukon-Koyukuk Census Area,203.0,Fairbanks

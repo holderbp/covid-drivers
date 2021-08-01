@@ -12,7 +12,7 @@ import datetime as dt
 #  ---> But set to True to re-run the collection/definition of all
 #       county/DMA/state FIPS (see pars/files in function)
 #
-do_fips_dma_collection = False
+do_fips_dma_collection = True
 #=== Processing Steps: Should be done (True) whenever data is
 #                      downloaded again.
 #
@@ -360,7 +360,9 @@ def output_fips_dma_file():
             'dmaname': ""
         }
         newfipdicts.append(newentry)
-    counties_df = counties_df.append(newfipdicts, ignore_index=True, sort=False)    
+    counties_df = counties_df.append(newfipdicts, ignore_index=True, sort=False)
+    #=== Delete the Valdez-Cordova (AK) entry.  Will be replaced below with Chugach+Copper River
+    counties_df = counties_df[counties_df['fips'] != 2261]
     #=== Add a "county-type" variable
     #
     #      'state' = whole state ('All' FIPS)
